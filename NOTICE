@@ -1,0 +1,13 @@
+mlx-birefnet-swift
+==================
+
+The `Sources/BiRefNet` core (and `Sources/Convert`) is vendored from:
+
+  mlx-swift-BiRefNet — Copyright (c) 2026 Hiroaki Yamane — MIT License
+  https://github.com/mnmly/mlx-swift-BiRefNet
+
+itself a Swift/MLX port of BiRefNet by ZhengPeng7 (https://github.com/ZhengPeng7/BiRefNet, MIT).
+See LICENSE (MIT) for full terms. Vendored 2026-06-21; the `MLXBiRefNet` engine-wrapper target
+(BiRefNetPackage + BiRefNetConfiguration) is new and original to this repository.
+
+Model weights are MIT throughout (ZhengPeng7/BiRefNet, BiRefNet-matting, BiRefNet_HR-matting).
