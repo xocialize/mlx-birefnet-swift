@@ -55,8 +55,10 @@ struct Smoke {
                   let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { throw SmokeError.badImage }
             let image = Image(format: .png, data: try encodePNG(cg), width: cg.width, height: cg.height)
 
-            let config = BiRefNetConfiguration(fastWeightsURL: URL(fileURLWithPath: fastW),
-                                               bestWeightsURL: URL(fileURLWithPath: bestW))
+            // "hub" sentinel → nil override → exercise the live HubApi download (post-upload verify).
+            let config = BiRefNetConfiguration(
+                fastWeightsURL: fastW == "hub" ? nil : URL(fileURLWithPath: fastW),
+                bestWeightsURL: bestW == "hub" ? nil : URL(fileURLWithPath: bestW))
 
             // Full engine path: register (license gate + C10 eligibility) → run (engine constructs/loads
             // the package, C13; first run lazily loads weights).
