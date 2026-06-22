@@ -4,11 +4,13 @@ import ImageIO
 import UniformTypeIdentifiers
 import MLX
 import MLXToolKit
+import MLXServeCore
 import MLXBiRefNet
 
 // birefnet-smoke <image> <fast.safetensors> <best.safetensors> <out.png> [fast|best]
-// Drives the REAL BiRefNetPackage (load → run) end-to-end — the first real forward (silent-failure surface).
-// Reports timing + peak GPU memory + matte gray-stats so an all-black/uniform matte is caught, not eyeballed.
+// Drives the package through the REAL MLXServeEngine (register → run) — proving the full Stage-2 path:
+// license-gate admission (MIT/MIT), device eligibility (C10), engine-constructs-the-package (C13), and the
+// matte forward. Reports timing + peak GPU memory + matte gray-stats so a uniform (silent) matte is caught.
 
 enum SmokeError: Error { case usage, badImage, badResponse }
 
@@ -55,23 +57,28 @@ struct Smoke {
 
             let config = BiRefNetConfiguration(fastWeightsURL: URL(fileURLWithPath: fastW),
                                                bestWeightsURL: URL(fileURLWithPath: bestW))
-            let package = BiRefNetPackage(configuration: config)
 
+            // Full engine path: register (license gate + C10 eligibility) → run (engine constructs/loads
+            // the package, C13; first run lazily loads weights).
+            let engine = MLXServeEngine()
+            await engine.useModelStore(ModelStore(root: nil))
             let t0 = Date()
-            try await package.load()
-            let tLoad = Date().timeIntervalSince(t0)
+            let id = try await engine.register(BiRefNetPackage.registration, configuration: config)
+            let tReg = Date().timeIntervalSince(t0)
 
             let mode: Mode = quality == "best" ? MattingContract.best : MattingContract.fast
             let t1 = Date()
-            let resp = try await package.run(MattingRequest(image: image, preferredKind: .softAlpha, mode: mode))
+            let resp = try await engine.run(MattingRequest(image: image, preferredKind: .softAlpha, mode: mode),
+                                            package: id)
             let tRun = Date().timeIntervalSince(t1)
+            let tLoad = tReg   // register is the cheap gate; weights load inside the first run
 
             guard let matte = (resp as? MattingResponse)?.matte else { throw SmokeError.badResponse }
             try matte.data.write(to: URL(fileURLWithPath: outPath))
 
             let s = grayStats(matte.data)
             let peakMB = Double(MLX.GPU.snapshot().peakMemory) / 1_048_576
-            print(String(format: "OK %@ → %@ | %dx%d kind=%@ | load %.2fs run %.2fs | peakGPU %.0f MB | "
+            print(String(format: "OK %@ → %@ | %dx%d kind=%@ | reg %.2fs run %.2fs | peakGPU %.0f MB | "
                 + "gray mean %.3f [%.3f…%.3f]", quality, outPath, matte.width ?? -1, matte.height ?? -1,
                 matte.kind.rawValue, tLoad, tRun, peakMB, s.mean, s.min, s.max))
             if s.max - s.min < 0.02 {

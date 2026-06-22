@@ -56,6 +56,7 @@ let package = Package(
                 "MLXBiRefNet",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXToolKit", package: "mlx-engine-swift"),
+                .product(name: "MLXServeCore", package: "mlx-engine-swift"),
             ],
             path: "Sources/Smoke"
         ),
