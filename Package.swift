@@ -23,6 +23,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift.git", from: "0.31.3"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
+        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),  // Hub weight download
         // Local path → build against the workspace's MLXToolKit (the 1.5.0 matting contract).
         .package(path: "../mlx-engine-swift"),
     ],
@@ -41,6 +42,7 @@ let package = Package(
                 "BiRefNet",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXToolKit", package: "mlx-engine-swift"),
+                .product(name: "Hub", package: "swift-transformers"),
             ],
             path: "Sources/MLXBiRefNet"
         ),

@@ -4,6 +4,7 @@ import ImageIO
 import UniformTypeIdentifiers
 import MLX
 import MLXToolKit
+import Hub
 import BiRefNet
 
 /// The conformant `matting` ModelPackage over the vendored BiRefNet core. One package, two quality modes
@@ -17,7 +18,9 @@ public final class BiRefNetPackage: ModelPackage {
     public nonisolated static var manifest: PackageManifest {
         PackageManifest(
             license: LicenseDeclaration(weightLicense: .mit, portCodeLicense: .mit),   // BiRefNet MIT throughout
-            provenance: Provenance(sourceRepo: "mnmly/mlx-swift-BiRefNet", revision: "main", tier: 2),
+            // sourceRepo is the engine's download/marker key → point at the primary (fast) weights repo;
+            // code provenance (vendored mnmly/mlx-swift-BiRefNet) lives in NOTICE/LICENSE.
+            provenance: Provenance(sourceRepo: "mlx-community/birefnet-general-mlx", revision: "main", tier: 2),
             requirements: RequirementsManifest(
                 // Smoke-measured fp16 peak (5.6 MP input, hard_fur_dog): fast@1024 ≈ 4.9 GB · best@2048 ≈ 18.3 GB.
                 // load() warms `fast` (the consumer path) → declare the fast envelope here. NOTE: best@2048
@@ -46,9 +49,9 @@ public final class BiRefNetPackage: ModelPackage {
     }
 
     /// Warm the default (`fast`) tier; `best` builds lazily on its first request so a fast-only workflow
-    /// never pays the 2048 weight load.
+    /// never pays the 2048 weight load (or download).
     public func load() async throws {
-        if fast == nil { fast = try buildPipeline(best: false) }
+        if fast == nil { fast = try await buildPipeline(best: false) }
     }
 
     public func unload() async { fast = nil; best = nil }
@@ -59,7 +62,7 @@ public final class BiRefNetPackage: ModelPackage {
         }
         try Task.checkCancellation()
         let useBest = req.mode == MattingContract.best
-        let pipeline = try pipeline(best: useBest)
+        let pipeline = try await pipeline(best: useBest)
         let input = try Self.decode(req.image)
         let prediction = pipeline(input)               // preprocess → forward → sigmoid → resize-to-source
         let matteCG = try prediction.maskCGImage()     // 8-bit grayscale, source resolution
@@ -72,34 +75,39 @@ public final class BiRefNetPackage: ModelPackage {
 
     // MARK: - Pipeline construction
 
-    private func pipeline(best useBest: Bool) throws -> BiRefNetPipeline {
+    private func pipeline(best useBest: Bool) async throws -> BiRefNetPipeline {
         if useBest {
-            if best == nil { best = try buildPipeline(best: true) }
+            if best == nil { best = try await buildPipeline(best: true) }
             return best!
         }
-        if fast == nil { fast = try buildPipeline(best: false) }
+        if fast == nil { fast = try await buildPipeline(best: false) }
         return fast!
     }
 
-    private func buildPipeline(best useBest: Bool) throws -> BiRefNetPipeline {
+    private func buildPipeline(best useBest: Bool) async throws -> BiRefNetPipeline {
         let size = useBest ? 2048 : 1024
-        let url = try weightsURL(best: useBest)
+        let url = try await weightsURL(best: useBest)
         var cfg = BiRefNetConfig.swinLargeDefault
         cfg.inputSize = (width: size, height: size)
         return try BiRefNetPipeline.fromPretrained(url.path, dtype: Self.dtype(configuration.quant), config: cfg)
     }
 
-    private func weightsURL(best useBest: Bool) throws -> URL {
-        // A direct override (pre-resolved caller / CLI smoke) wins over model-store resolution.
+    /// Resolve the weights file, **downloading from HF on first use** via the convention's native
+    /// downloader (swift-transformers `HubApi`, pointed at the engine-stamped model-store root; idempotent —
+    /// skips files already present). Download progress is forwarded to the engine's `WeightDownloadProgress`
+    /// sink so the host's prep UI shows a real `.downloading(fraction:)`. A direct override URL (pre-resolved
+    /// caller / CLI smoke) bypasses the network entirely.
+    private func weightsURL(best useBest: Bool) async throws -> URL {
         if let override = useBest ? configuration.bestWeightsURL : configuration.fastWeightsURL {
             guard FileManager.default.fileExists(atPath: override.path) else {
                 throw BiRefNetError.weightsMissing(override)
             }
             return override
         }
-        let store = ModelStore(root: configuration.modelsRootDirectory)
-        guard let dir = store.directory(for: useBest ? configuration.bestRepo : configuration.fastRepo) else {
-            throw BiRefNetError.noModelStore
+        let repo = useBest ? configuration.bestRepo : configuration.fastRepo
+        let hub = HubApi(downloadBase: configuration.modelsRootDirectory)
+        let dir = try await hub.snapshot(from: repo, matching: ["*.safetensors"]) { @Sendable progress in
+            WeightDownloadProgress.report(fraction: progress.fractionCompleted)
         }
         let url = dir.appendingPathComponent(configuration.weightsFile)
         guard FileManager.default.fileExists(atPath: url.path) else { throw BiRefNetError.weightsMissing(url) }

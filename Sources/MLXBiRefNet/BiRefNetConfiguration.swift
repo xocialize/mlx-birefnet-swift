@@ -21,8 +21,8 @@ public struct BiRefNetConfiguration: PackageConfiguration, ModelStorable {
     public var fastWeightsURL: URL?
     public var bestWeightsURL: URL?
 
-    public init(fastRepo: String = "xocialize/birefnet-general-mlx",
-                bestRepo: String = "xocialize/birefnet-hr-matting-mlx",
+    public init(fastRepo: String = "mlx-community/birefnet-general-mlx",
+                bestRepo: String = "mlx-community/birefnet-hr-matting-mlx",
                 weightsFile: String = "model.safetensors",
                 quant: Quant = .fp16,
                 modelsRootDirectory: URL? = nil,
