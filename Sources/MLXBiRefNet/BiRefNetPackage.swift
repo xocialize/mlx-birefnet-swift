@@ -20,7 +20,7 @@ public final class BiRefNetPackage: ModelPackage {
             license: LicenseDeclaration(weightLicense: .mit, portCodeLicense: .mit),   // BiRefNet MIT throughout
             // sourceRepo is the engine's download/marker key → point at the primary (fast) weights repo;
             // code provenance (vendored mnmly/mlx-swift-BiRefNet) lives in NOTICE/LICENSE.
-            provenance: Provenance(sourceRepo: "mlx-community/birefnet-general-mlx", revision: "main", tier: 2),
+            provenance: Provenance(sourceRepo: "mlx-community/BiRefNet-fp16", revision: "main", tier: 2),
             requirements: RequirementsManifest(
                 // Smoke-measured fp16 peak (5.6 MP input, hard_fur_dog): fast@1024 ≈ 4.9 GB · best@2048 ≈ 18.3 GB.
                 // load() warms `fast` (the consumer path) → declare the fast envelope here. NOTE: best@2048
