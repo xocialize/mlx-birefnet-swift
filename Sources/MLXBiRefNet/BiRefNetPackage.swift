@@ -19,8 +19,12 @@ public final class BiRefNetPackage: ModelPackage {
             license: LicenseDeclaration(weightLicense: .mit, portCodeLicense: .mit),   // BiRefNet MIT throughout
             provenance: Provenance(sourceRepo: "mnmly/mlx-swift-BiRefNet", revision: "main", tier: 2),
             requirements: RequirementsManifest(
-                // Placeholder — re-measured empirically per tier (MemoryProbe) before the C-memory gate.
-                footprints: [QuantFootprint(quant: .fp16, residentBytes: 2_000_000_000)],
+                // Smoke-measured fp16 peak (5.6 MP input, hard_fur_dog): fast@1024 ≈ 4.9 GB · best@2048 ≈ 18.3 GB.
+                // load() warms `fast` (the consumer path) → declare the fast envelope here. NOTE: best@2048
+                // transiently peaks ~18 GB — a per-mode footprint isn't expressible in one package; tracked as
+                // a contract gap (feed back) + a runtime memory guard before best on tight machines. Proper
+                // controlled-envelope MemoryProbe still owed for the C-memory gate.
+                footprints: [QuantFootprint(quant: .fp16, residentBytes: 5_300_000_000)],
                 requiredBackends: [.metalGPU],
                 os: OSRequirement(minMacOS: SemanticVersion(major: 26, minor: 0, patch: 0))
             ),
@@ -78,17 +82,25 @@ public final class BiRefNetPackage: ModelPackage {
     }
 
     private func buildPipeline(best useBest: Bool) throws -> BiRefNetPipeline {
-        let repo = useBest ? configuration.bestRepo : configuration.fastRepo
         let size = useBest ? 2048 : 1024
-        let url = try weightsURL(repo: repo)
+        let url = try weightsURL(best: useBest)
         var cfg = BiRefNetConfig.swinLargeDefault
         cfg.inputSize = (width: size, height: size)
         return try BiRefNetPipeline.fromPretrained(url.path, dtype: Self.dtype(configuration.quant), config: cfg)
     }
 
-    private func weightsURL(repo: String) throws -> URL {
+    private func weightsURL(best useBest: Bool) throws -> URL {
+        // A direct override (pre-resolved caller / CLI smoke) wins over model-store resolution.
+        if let override = useBest ? configuration.bestWeightsURL : configuration.fastWeightsURL {
+            guard FileManager.default.fileExists(atPath: override.path) else {
+                throw BiRefNetError.weightsMissing(override)
+            }
+            return override
+        }
         let store = ModelStore(root: configuration.modelsRootDirectory)
-        guard let dir = store.directory(for: repo) else { throw BiRefNetError.noModelStore }
+        guard let dir = store.directory(for: useBest ? configuration.bestRepo : configuration.fastRepo) else {
+            throw BiRefNetError.noModelStore
+        }
         let url = dir.appendingPathComponent(configuration.weightsFile)
         guard FileManager.default.fileExists(atPath: url.path) else { throw BiRefNetError.weightsMissing(url) }
         return url

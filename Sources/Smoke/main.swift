@@ -1,0 +1,87 @@
+import Foundation
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
+import MLX
+import MLXToolKit
+import MLXBiRefNet
+
+// birefnet-smoke <image> <fast.safetensors> <best.safetensors> <out.png> [fast|best]
+// Drives the REAL BiRefNetPackage (load → run) end-to-end — the first real forward (silent-failure surface).
+// Reports timing + peak GPU memory + matte gray-stats so an all-black/uniform matte is caught, not eyeballed.
+
+enum SmokeError: Error { case usage, badImage, badResponse }
+
+func encodePNG(_ cg: CGImage) throws -> Data {
+    let data = NSMutableData()
+    guard let dest = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil)
+    else { throw SmokeError.badImage }
+    CGImageDestinationAddImage(dest, cg, nil)
+    guard CGImageDestinationFinalize(dest) else { throw SmokeError.badImage }
+    return data as Data
+}
+
+/// Decode a grayscale PNG matte and report normalized mean/min/max — a near-uniform result is the
+/// classic "looks fine, is wrong" silent failure.
+func grayStats(_ png: Data) -> (mean: Double, min: Double, max: Double) {
+    guard let src = CGImageSourceCreateWithData(png as CFData, nil),
+          let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return (0, 0, 0) }
+    let w = cg.width, h = cg.height
+    var buf = [UInt8](repeating: 0, count: w * h)
+    let cs = CGColorSpaceCreateDeviceGray()
+    guard let ctx = CGContext(data: &buf, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                              space: cs, bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return (0, 0, 0) }
+    ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+    var sum = 0.0, lo = 255, hi = 0
+    for v in buf { sum += Double(v); lo = min(lo, Int(v)); hi = max(hi, Int(v)) }
+    return (sum / Double(buf.count) / 255.0, Double(lo) / 255.0, Double(hi) / 255.0)
+}
+
+@main
+struct Smoke {
+    static func main() async {
+        let a = CommandLine.arguments
+        guard a.count >= 5 else {
+            FileHandle.standardError.write(Data(
+                "usage: birefnet-smoke <image> <fast.safetensors> <best.safetensors> <out.png> [fast|best]\n".utf8))
+            exit(2)
+        }
+        let imagePath = a[1], fastW = a[2], bestW = a[3], outPath = a[4]
+        let quality = a.count > 5 ? a[5] : "fast"
+        do {
+            guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: imagePath) as CFURL, nil),
+                  let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { throw SmokeError.badImage }
+            let image = Image(format: .png, data: try encodePNG(cg), width: cg.width, height: cg.height)
+
+            let config = BiRefNetConfiguration(fastWeightsURL: URL(fileURLWithPath: fastW),
+                                               bestWeightsURL: URL(fileURLWithPath: bestW))
+            let package = BiRefNetPackage(configuration: config)
+
+            let t0 = Date()
+            try await package.load()
+            let tLoad = Date().timeIntervalSince(t0)
+
+            let mode: Mode = quality == "best" ? MattingContract.best : MattingContract.fast
+            let t1 = Date()
+            let resp = try await package.run(MattingRequest(image: image, preferredKind: .softAlpha, mode: mode))
+            let tRun = Date().timeIntervalSince(t1)
+
+            guard let matte = (resp as? MattingResponse)?.matte else { throw SmokeError.badResponse }
+            try matte.data.write(to: URL(fileURLWithPath: outPath))
+
+            let s = grayStats(matte.data)
+            let peakMB = Double(MLX.GPU.snapshot().peakMemory) / 1_048_576
+            print(String(format: "OK %@ → %@ | %dx%d kind=%@ | load %.2fs run %.2fs | peakGPU %.0f MB | "
+                + "gray mean %.3f [%.3f…%.3f]", quality, outPath, matte.width ?? -1, matte.height ?? -1,
+                matte.kind.rawValue, tLoad, tRun, peakMB, s.mean, s.min, s.max))
+            if s.max - s.min < 0.02 {
+                FileHandle.standardError.write(Data(
+                    "WARN: matte near-uniform (mean \(s.mean)) — possible silent failure\n".utf8))
+                exit(3)
+            }
+        } catch {
+            FileHandle.standardError.write(Data("FAILED: \(error)\n".utf8))
+            exit(1)
+        }
+    }
+}

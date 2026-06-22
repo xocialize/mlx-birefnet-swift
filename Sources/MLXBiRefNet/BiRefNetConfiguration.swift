@@ -16,16 +16,24 @@ public struct BiRefNetConfiguration: PackageConfiguration, ModelStorable {
     public var quant: Quant
     /// Engine-injected model-store root (download dir + security-scoped bookmark).
     public var modelsRootDirectory: URL?
+    /// Direct path to the `fast`/`best` weights, bypassing model-store resolution. For pre-resolved
+    /// callers + dev/CLI smoke; nil = resolve under `modelsRootDirectory`/`fastRepo`/`bestRepo`.
+    public var fastWeightsURL: URL?
+    public var bestWeightsURL: URL?
 
     public init(fastRepo: String = "xocialize/birefnet-general-mlx",
                 bestRepo: String = "xocialize/birefnet-hr-matting-mlx",
                 weightsFile: String = "model.safetensors",
                 quant: Quant = .fp16,
-                modelsRootDirectory: URL? = nil) {
+                modelsRootDirectory: URL? = nil,
+                fastWeightsURL: URL? = nil,
+                bestWeightsURL: URL? = nil) {
         self.fastRepo = fastRepo
         self.bestRepo = bestRepo
         self.weightsFile = weightsFile
         self.quant = quant
         self.modelsRootDirectory = modelsRootDirectory
+        self.fastWeightsURL = fastWeightsURL
+        self.bestWeightsURL = bestWeightsURL
     }
 }
