@@ -22,12 +22,14 @@ public final class BiRefNetPackage: ModelPackage {
             // code provenance (vendored mnmly/mlx-swift-BiRefNet) lives in NOTICE/LICENSE.
             provenance: Provenance(sourceRepo: "mlx-community/BiRefNet-fp16", revision: "main", tier: 2),
             requirements: RequirementsManifest(
-                // Smoke-measured fp16 peak (5.6 MP input, hard_fur_dog): fast@1024 ≈ 4.9 GB · best@2048 ≈ 18.3 GB.
-                // load() warms `fast` (the consumer path) → declare the fast envelope here. NOTE: best@2048
-                // transiently peaks ~18 GB — a per-mode footprint isn't expressible in one package; tracked as
-                // a contract gap (feed back) + a runtime memory guard before best on tight machines. Proper
-                // controlled-envelope MemoryProbe still owed for the C-memory gate.
-                footprints: [QuantFootprint(quant: .fp16, residentBytes: 5_300_000_000)],
+                // Memory-harness measured (M-Max, 5.6 MP input; weights resident only ~424 MB fp16 — the
+                // footprint is ~all activation high-water): fast@1024 peak 4.9 GB → recommend 6.2 GB ·
+                // best@2048 peak 18.3 GB → recommend 22.2 GB. One fp16 footprint can't express both, and the
+                // governor charges the largest-fitting footprint → declaring best (22 GB) would make even the
+                // 6 GB fast tier inadmissible on <32 GB Macs. So declare the **fast (consumer) envelope** and
+                // gate best with a RUNTIME memory guard (see `run()`); the proper fix is a config/per-mode
+                // footprint (open engine enhancement — flagged to feed back). See MEMORY-REPORT.md.
+                footprints: [QuantFootprint(quant: .fp16, residentBytes: 6_500_000_000)],
                 requiredBackends: [.metalGPU],
                 os: OSRequirement(minMacOS: SemanticVersion(major: 26, minor: 0, patch: 0))
             ),
@@ -39,6 +41,10 @@ public final class BiRefNetPackage: ModelPackage {
                     modes: [MattingContract.fast, MattingContract.best])
             ])
     }
+
+    /// Device Metal working set best@2048 needs (measured peak 18.3 GB + margin). Below this, `run(.best)`
+    /// refuses rather than OOMs; ~32 GB+ Macs clear it, ≤16 GB don't.
+    private static let bestMinWorkingSet: UInt64 = 19_500_000_000
 
     private let configuration: Configuration
     private var fast: BiRefNetPipeline?
@@ -62,6 +68,16 @@ public final class BiRefNetPackage: ModelPackage {
         }
         try Task.checkCancellation()
         let useBest = req.mode == MattingContract.best
+        // Runtime memory guard: best@2048 peaks ~18 GB, which the single declared (fast) footprint doesn't
+        // reserve — so refuse best on a device whose Metal working set can't hold it (rather than OOM mid-
+        // forward). The caller (e.g. EngineMatteProvider) can catch this and fall back to fast.
+        if useBest {
+            let workingSet = MLX.GPU.deviceInfo().maxRecommendedWorkingSetSize
+            if workingSet > 0 && workingSet < Self.bestMinWorkingSet {
+                throw BiRefNetError.insufficientMemoryForBest(needsBytes: Self.bestMinWorkingSet,
+                                                              deviceBytes: workingSet)
+            }
+        }
         let pipeline = try await pipeline(best: useBest)
         let input = try Self.decode(req.image)
         let prediction = pipeline(input)               // preprocess → forward → sigmoid → resize-to-source
@@ -148,6 +164,8 @@ public final class BiRefNetPackage: ModelPackage {
         case weightsMissing(URL)
         case decodeFailed
         case encodeFailed
+        /// `best` requested but the device's Metal working set can't hold the ~18 GB peak. Catch + retry `fast`.
+        case insufficientMemoryForBest(needsBytes: UInt64, deviceBytes: UInt64)
     }
 }
 

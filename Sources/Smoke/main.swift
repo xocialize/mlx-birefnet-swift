@@ -83,6 +83,17 @@ struct Smoke {
             print(String(format: "OK %@ → %@ | %dx%d kind=%@ | reg %.2fs run %.2fs | peakGPU %.0f MB | "
                 + "gray mean %.3f [%.3f…%.3f]", quality, outPath, matte.width ?? -1, matte.height ?? -1,
                 matte.kind.rawValue, tLoad, tRun, peakMB, s.mean, s.min, s.max))
+
+            // --- Memory report (this variant; one process = a clean peak). Methodology per the
+            // memory-harness: peak active during the real forward + resident floor (active after freeing
+            // activations) + the device's recommendedWorkingSet ceiling. Recommend = peak×1.2 + 256 MB.
+            MLX.GPU.clearCache()
+            let floorMB = Double(MLX.GPU.snapshot().activeMemory) / 1_048_576
+            let workingSetMB = Double(MLX.GPU.deviceInfo().maxRecommendedWorkingSetSize) / 1_048_576
+            let recommendMB = peakMB * 1.2 + 256
+            print(String(format: "MEM %@ | floor %.0f MB · peak %.0f MB · recommend %.0f MB (×1.2+256) | "
+                + "workingSet %.0f MB · exceeds %@", quality, floorMB, peakMB, recommendMB, workingSetMB,
+                recommendMB > workingSetMB ? "YES" : "no"))
             if s.max - s.min < 0.02 {
                 FileHandle.standardError.write(Data(
                     "WARN: matte near-uniform (mean \(s.mean)) — possible silent failure\n".utf8))
