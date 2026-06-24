@@ -24,8 +24,11 @@ let package = Package(
         .package(url: "https://github.com/ml-explore/mlx-swift.git", from: "0.31.3"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),  // Hub weight download
-        // Local path → build against the workspace's MLXToolKit (the 1.5.0 matting contract).
-        .package(path: "../mlx-engine-swift"),
+        // Remote engine (0.10.0 supersets the 1.5.0 matting contract). MUST be the remote URL — a
+        // local .package(path:) collides with the same package identity arriving by URL from the
+        // sibling wrappers in a consuming app's graph, jamming engine resolution. (APP-VALIDATION
+        // BRIDGE-026 / mlxengine-forge.)
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.10.0"),
     ],
     targets: [
         // Vendored core — kept in Swift 5 language mode to avoid churn on the donor's concurrency.
