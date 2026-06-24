@@ -17,8 +17,8 @@ let package = Package(
     products: [
         .library(name: "BiRefNet", targets: ["BiRefNet"]),               // vendored MLX core
         .library(name: "MLXBiRefNet", targets: ["MLXBiRefNet"]),         // engine-consumable wrapper
-        .executable(name: "birefnet-convert", targets: ["Convert"]),     // PyTorch/HF → MLX weight converter
-        .executable(name: "birefnet-smoke", targets: ["Smoke"]),         // real-forward gate over BiRefNetPackage
+        .executable(name: "birefnet-convert", targets: ["BiRefNetConvert"]), // PyTorch/HF → MLX weight converter
+        .executable(name: "birefnet-smoke", targets: ["BiRefNetSmoke"]),     // real-forward gate over BiRefNetPackage
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift.git", from: "0.31.3"),
@@ -50,13 +50,13 @@ let package = Package(
             path: "Sources/MLXBiRefNet"
         ),
         .executableTarget(
-            name: "Convert",
+            name: "BiRefNetConvert",
             dependencies: ["BiRefNet", .product(name: "ArgumentParser", package: "swift-argument-parser")],
             path: "Sources/Convert",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
-            name: "Smoke",
+            name: "BiRefNetSmoke",
             dependencies: [
                 "MLXBiRefNet",
                 .product(name: "MLX", package: "mlx-swift"),
