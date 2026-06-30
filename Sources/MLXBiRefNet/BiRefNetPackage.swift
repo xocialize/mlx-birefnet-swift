@@ -74,7 +74,14 @@ public final class BiRefNetPackage: ModelPackage {
         if fast == nil { fast = try await buildPipeline(best: false) }
     }
 
-    public func unload() async { fast = nil; best = nil }
+    public func unload() async {
+        fast = nil; best = nil
+        // Release the retained MLX buffer pool so eviction actually frees process RSS — dropping the refs
+        // alone leaves the (large, @2048) activation buffers in MLX's cache, so phys_footprint doesn't drop
+        // and R-MEM-1 can't reclaim. (Image-app acceptance run: process RSS grew monotonically across model
+        // switches because unload() didn't clear the cache.)
+        MLX.Memory.clearCache()
+    }
 
     public func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
         guard request.capability == .matting, let req = request as? MattingRequest else {
