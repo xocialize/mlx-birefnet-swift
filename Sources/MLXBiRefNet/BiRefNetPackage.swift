@@ -22,28 +22,29 @@ public final class BiRefNetPackage: ModelPackage {
             // code provenance (vendored mnmly/mlx-swift-BiRefNet) lives in NOTICE/LICENSE.
             provenance: Provenance(sourceRepo: "mlx-community/BiRefNet-fp16", revision: "main", tier: 2),
             requirements: RequirementsManifest(
-                // SPLIT FOOTPRINT (contract 1.14.0) — re-measured 2026-06-30 via birefnet-smoke through the
-                // real MLXServeEngine (M-Max, 2048×2731 / 5.6 MP input, fp16). The footprint is ~all
-                // activation: weights resident only ~424 MB per pipeline; the peak is the Swin-L forward
-                // high-water and scales with model input size.
-                //   • fast@1024 : floor 423 MB · peak 4,941 MB
-                //   • best@2048 : floor 425 MB · peak 18,305 MB
-                // Declared = the FAST (consumer) envelope as a split: residentBytes = both pipelines' weights
-                // floor (~0.9 GB, since best builds lazily and co-resides once requested); peakActivationBytes
-                // = fast peak − floor (≈4.4 GB transient). With the engine reserving one shared transient
-                // across residents (serialized inference), this charges persistent ~0.9 GB + transient ~4.4 GB
-                // instead of the old flat 6.5 GB — letting BiRefNet co-reside with the rest of the optimizer
-                // chain on the weights while sharing a single activation reserve.
+                // SPLIT FOOTPRINT (contract 1.14.0) — RE-BASELINED 2026-06-30 to the in-app **process
+                // phys_footprint** (the authoritative admission basis: it's what R-MEM-1 compares against and
+                // what OOMs the process), measured in MLXEngineImage via MLXEngineTestKit with isolate +
+                // clearCache. The original birefnet-smoke figures (fast peak 4.9 GB / best 18.3 GB) were MLX
+                // working-set, which UNDER-read the real process peak by ~2.7× (the MLX buffer cache + process
+                // overhead aren't in the MLX-peak metric). Clean phys_footprint (floor after clearCache → true
+                // weights; peak = run high-water):
+                //   • fast@1024 : floor 0.54 GB · peak 13.70 GB → transient ~13.2 GB
+                //   • best@2048 : floor 0.61 GB · peak 47.79 GB → transient ~47.2 GB
+                // Declared = the FAST (consumer) envelope as a split: residentBytes ~0.9 GB (both pipelines'
+                // weights, best builds lazily + co-resides once requested); peakActivationBytes = the measured
+                // fast transient. The engine reserves one shared transient across residents (serialized
+                // inference), so this charges ~0.9 GB persistent + ~14 GB transient.
                 //
                 // best's measured split (NOT the admitted default; both modes are fp16 so QuantFootprint can't
-                // carry it): residentBytes ~0.5 GB · peakActivationBytes ~17.9 GB (18,305 − 425). best stays a
-                // RUNTIME-guarded variant (see `run()` / bestMinWorkingSet) — mode is per-request, so admission
-                // (at load, before the mode is known) can't reserve its ~18 GB peak. Making best a first-class
+                // carry it): residentBytes ~0.6 GB · peakActivationBytes ~47.2 GB. best stays a RUNTIME-guarded
+                // variant (see `run()` / bestMinWorkingSet) — mode is per-request, so admission (at load,
+                // before the mode is known) can't reserve its ~48 GB peak. The guard was raised 19.5 → 48 GB
+                // on this re-measure (best does NOT fit 32 GB, is tight on 64 GB). Making best a first-class
                 // admitted variant = P1b (mode → PackageID); deferred (see EFFICIENCY-ADOPTION.md outcome).
-                // See MEMORY-REPORT.md.
                 footprints: [QuantFootprint(quant: .fp16,
-                                            residentBytes: 900_000_000,        // both pipelines' weights floor
-                                            peakActivationBytes: 4_400_000_000)], // fast peak − floor (transient)
+                                            residentBytes: 900_000_000,         // both pipelines' weights floor
+                                            peakActivationBytes: 14_000_000_000)], // measured fast transient (~13.2 GB + margin)
                 requiredBackends: [.metalGPU],
                 os: OSRequirement(minMacOS: SemanticVersion(major: 26, minor: 0, patch: 0))
             ),
@@ -56,9 +57,11 @@ public final class BiRefNetPackage: ModelPackage {
             ])
     }
 
-    /// Device Metal working set best@2048 needs (measured peak 18.3 GB + margin). Below this, `run(.best)`
-    /// refuses rather than OOMs; ~32 GB+ Macs clear it, ≤16 GB don't.
-    private static let bestMinWorkingSet: UInt64 = 19_500_000_000
+    /// Device Metal working set best@2048 needs. RE-BASELINED 2026-06-30 to the in-app phys_footprint peak
+    /// (47.79 GB — the old 19.5 GB was from the MLX-peak smoke and ~2.4× too low, so best falsely admitted
+    /// on 32 GB Macs). Below this, `run(.best)` refuses rather than OOMs: a 32 GB Mac fails, a 64 GB Mac
+    /// clears it (tight). Callers (e.g. EngineMatteProvider) catch `insufficientMemoryForBest` → fall back to fast.
+    private static let bestMinWorkingSet: UInt64 = 48_000_000_000
 
     private let configuration: Configuration
     private var fast: BiRefNetPipeline?
