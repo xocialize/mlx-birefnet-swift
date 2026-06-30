@@ -21,15 +21,30 @@ Measured via `birefnet-smoke` (one variant per process = a clean peak) → `MEM`
 - **best is a pro-tier (~32 GB+) feature.** Its ~18.3 GB peak needs a Metal working set ≥ ~19.5 GB; a 16 GB
   Mac (workingSet ~11 GB) can't hold it. fast (~6 GB) is consumer-viable.
 
-## Declaration + guard (one fp16 footprint can't express both)
+## Declaration + guard (SPLIT footprint, contract 1.14.0 — efficiency adoption 2026-06-30)
 
-`MemoryGovernor` charges the largest declared footprint that fits the budget, and footprints key on **quant**
-(both tiers are fp16) — so a single manifest can't carry per-mode footprints. Declaring best (22 GB) would
-make even the 6 GB fast tier inadmissible on <32 GB Macs. Therefore:
+The open enhancement this report flagged **shipped** (engine 0.14.0 / contract 1.14.0:
+`QuantFootprint.peakActivationBytes` + the engine's single shared transient reserve across residents).
+Re-measured via `birefnet-smoke` through the real `MLXServeEngine` — peaks identical to the table above.
+Both tiers are fp16, so `QuantFootprint` (keyed on quant) still can't carry per-mode figures; the package
+declares the **fast (consumer) envelope as a SPLIT** and keeps the best runtime guard:
 
-- **Declared `QuantFootprint(.fp16, 6.5 GB)`** = the fast (consumer) envelope → fast admits broadly.
+- **Declared `QuantFootprint(.fp16, residentBytes: 0.9 GB, peakActivationBytes: 4.4 GB)`** — persistent
+  weights floor (both pipelines' ~424 MB; best builds lazily and co-resides once requested) + the fast
+  transient activation peak (4,941 − 423 MB). Replaces the old flat 6.5 GB. Because the engine reserves
+  **one** shared transient across all residents (serialized inference), BiRefNet now co-resides with the
+  rest of the optimizer chain on the weights while sharing a single activation reserve — engine charge
+  drops from **6.5 GB flat → ~0.9 GB resident** + a shared ~4.4 GB transient.
+- **`BiRefNetConfiguration: QuantConfigured`** — so the governor charges the matching declared fp16
+  footprint (not the largest-that-fits heuristic).
+- **best's measured split (documented, NOT admitted):** residentBytes ~0.5 GB · peakActivationBytes
+  ~17.9 GB (18,305 − 425 MB). best stays a **runtime-guarded** variant: mode is per-request, so admission
+  (at load, before the mode is known) can't reserve its ~18 GB peak.
 - **Runtime guard in `run(.best)`** refuses best (`insufficientMemoryForBest`) when
-  `maxRecommendedWorkingSetSize < 19.5 GB`, rather than OOM mid-forward; callers can catch + fall back to fast.
-- **Open engine enhancement (flagged to feed back):** config/per-mode footprints so a variant package can
-  declare both tiers and the governor admits the selected one. Until then, this declare-fast + guard-best is
-  the safe, product-viable compromise.
+  `maxRecommendedWorkingSetSize < 19.5 GB`, rather than OOM mid-forward; callers can catch + fall back to
+  fast. **Kept** — it's the device-capability check that lets "best when capable" work for the per-request
+  mode.
+- **P1b (deferred):** promoting mode to a registration-time `PackageID` axis (two packages each conforming
+  to `FootprintConfigured`, so best is first-class admitted/evicted) is a coordinated change — the PROD
+  consumer contract (`EngineMatteProvider`) relies on `req.mode` + the `insufficientMemoryForBest` fallback.
+  See EFFICIENCY-ADOPTION.md outcome.

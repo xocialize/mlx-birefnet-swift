@@ -22,14 +22,28 @@ public final class BiRefNetPackage: ModelPackage {
             // code provenance (vendored mnmly/mlx-swift-BiRefNet) lives in NOTICE/LICENSE.
             provenance: Provenance(sourceRepo: "mlx-community/BiRefNet-fp16", revision: "main", tier: 2),
             requirements: RequirementsManifest(
-                // Memory-harness measured (M-Max, 5.6 MP input; weights resident only ~424 MB fp16 — the
-                // footprint is ~all activation high-water): fast@1024 peak 4.9 GB → recommend 6.2 GB ·
-                // best@2048 peak 18.3 GB → recommend 22.2 GB. One fp16 footprint can't express both, and the
-                // governor charges the largest-fitting footprint → declaring best (22 GB) would make even the
-                // 6 GB fast tier inadmissible on <32 GB Macs. So declare the **fast (consumer) envelope** and
-                // gate best with a RUNTIME memory guard (see `run()`); the proper fix is a config/per-mode
-                // footprint (open engine enhancement — flagged to feed back). See MEMORY-REPORT.md.
-                footprints: [QuantFootprint(quant: .fp16, residentBytes: 6_500_000_000)],
+                // SPLIT FOOTPRINT (contract 1.14.0) — re-measured 2026-06-30 via birefnet-smoke through the
+                // real MLXServeEngine (M-Max, 2048×2731 / 5.6 MP input, fp16). The footprint is ~all
+                // activation: weights resident only ~424 MB per pipeline; the peak is the Swin-L forward
+                // high-water and scales with model input size.
+                //   • fast@1024 : floor 423 MB · peak 4,941 MB
+                //   • best@2048 : floor 425 MB · peak 18,305 MB
+                // Declared = the FAST (consumer) envelope as a split: residentBytes = both pipelines' weights
+                // floor (~0.9 GB, since best builds lazily and co-resides once requested); peakActivationBytes
+                // = fast peak − floor (≈4.4 GB transient). With the engine reserving one shared transient
+                // across residents (serialized inference), this charges persistent ~0.9 GB + transient ~4.4 GB
+                // instead of the old flat 6.5 GB — letting BiRefNet co-reside with the rest of the optimizer
+                // chain on the weights while sharing a single activation reserve.
+                //
+                // best's measured split (NOT the admitted default; both modes are fp16 so QuantFootprint can't
+                // carry it): residentBytes ~0.5 GB · peakActivationBytes ~17.9 GB (18,305 − 425). best stays a
+                // RUNTIME-guarded variant (see `run()` / bestMinWorkingSet) — mode is per-request, so admission
+                // (at load, before the mode is known) can't reserve its ~18 GB peak. Making best a first-class
+                // admitted variant = P1b (mode → PackageID); deferred (see EFFICIENCY-ADOPTION.md outcome).
+                // See MEMORY-REPORT.md.
+                footprints: [QuantFootprint(quant: .fp16,
+                                            residentBytes: 900_000_000,        // both pipelines' weights floor
+                                            peakActivationBytes: 4_400_000_000)], // fast peak − floor (transient)
                 requiredBackends: [.metalGPU],
                 os: OSRequirement(minMacOS: SemanticVersion(major: 26, minor: 0, patch: 0))
             ),

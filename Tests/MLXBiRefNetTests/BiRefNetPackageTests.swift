@@ -18,6 +18,22 @@ final class BiRefNetPackageTests: XCTestCase {
         XCTAssertTrue(surface.supportedModes.contains(MattingContract.best))
     }
 
+    /// Split footprint (contract 1.14.0): the declared fp16 footprint carries BOTH halves — a non-zero
+    /// transient activation peak (so the engine can reserve the shared transient) and a resident floor far
+    /// below the old flat 6.5 GB. Regression guard for the efficiency adoption (P1a).
+    func testSplitFootprintDeclared() {
+        let m = BiRefNetPackage.manifest
+        let fp = m.requirements.footprints.first { $0.quant == .fp16 }
+        XCTAssertNotNil(fp, "fp16 footprint must be declared")
+        XCTAssertGreaterThan(fp!.peakActivationBytes, 0, "transient must be declared so the engine can reserve it")
+        XCTAssertLessThan(fp!.residentBytes, 6_500_000_000, "resident floor must drop below the old flat charge")
+    }
+
+    /// `QuantConfigured` opt-in so the governor charges the matching declared `QuantFootprint`.
+    func testQuantConfigured() {
+        XCTAssertEqual((BiRefNetConfiguration() as? QuantConfigured)?.quant, .fp16)
+    }
+
     func testConfigurationDefaults() {
         let c = BiRefNetConfiguration()
         XCTAssertEqual(c.weightsFile, "model.safetensors")

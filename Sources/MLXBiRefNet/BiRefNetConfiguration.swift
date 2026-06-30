@@ -37,3 +37,10 @@ public struct BiRefNetConfiguration: PackageConfiguration, ModelStorable {
         self.bestWeightsURL = bestWeightsURL
     }
 }
+
+/// `QuantConfigured` (engine contract 1.14.0): the config already stores `var quant`, so an empty
+/// conformance lets `MemoryGovernor` charge the matching declared `QuantFootprint` for the selected
+/// quant instead of the largest-that-fits heuristic. (Both modes are fp16, so the quant match resolves
+/// to the single declared fp16 footprint — the split below; per-mode activation is handled by the
+/// `run()` best guard, see P1b note in EFFICIENCY-ADOPTION.md.)
+extension BiRefNetConfiguration: QuantConfigured {}
