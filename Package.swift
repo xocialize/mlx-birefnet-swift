@@ -29,6 +29,8 @@ let package = Package(
         // sibling wrappers in a consuming app's graph, jamming engine resolution. (APP-VALIDATION
         // BRIDGE-026 / mlxengine-forge.)
         .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.10.0"),
+        // Shared env-gated profiler (MLX_PROFILE=1); zero overhead when unset.
+        .package(url: "https://github.com/xocialize/mlx-profiling.git", from: "0.1.0"),
     ],
     targets: [
         // Vendored core — kept in Swift 5 language mode to avoid churn on the donor's concurrency.
@@ -45,6 +47,7 @@ let package = Package(
                 "BiRefNet",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXToolKit", package: "mlx-engine-swift"),
+                .product(name: "MLXProfiling", package: "mlx-profiling"),
                 .product(name: "Hub", package: "swift-transformers"),
             ],
             path: "Sources/MLXBiRefNet"

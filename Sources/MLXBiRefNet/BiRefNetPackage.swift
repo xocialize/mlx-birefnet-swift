@@ -4,6 +4,7 @@ import ImageIO
 import UniformTypeIdentifiers
 import MLX
 import MLXToolKit
+import MLXProfiling
 import Hub
 import BiRefNet
 
@@ -104,7 +105,16 @@ public final class BiRefNetPackage: ModelPackage {
         }
         let pipeline = try await pipeline(best: useBest)
         let input = try Self.decode(req.image)
-        let prediction = pipeline(input)               // preprocess → forward → sigmoid → resize-to-source
+        // Single-image matting forward is profiled (MLX_PROFILE=1). The pipeline self-evals its
+        // outputs (predict + source-res resize), so one coarse region times the whole lazy graph
+        // honestly; the core stays uninstrumented (single eval boundary, per the ddcolor precedent).
+        // beginRun sits AFTER the lazy build so a first-request weight download can't skew the run.
+        let prof = MLXProfiler.shared
+        prof.beginRun("birefnet matting \(useBest ? "best" : "fast") \(input.width)x\(input.height)")
+        let prediction = prof.region("matting", "forward") {
+            pipeline(input)                            // preprocess → forward → sigmoid → resize-to-source
+        }
+        prof.endRun(denominators: ["image": 1])
         let matteCG = try prediction.maskCGImage()     // 8-bit grayscale, source resolution
         try Task.checkCancellation()
         let png = try Self.encodePNG(matteCG)
