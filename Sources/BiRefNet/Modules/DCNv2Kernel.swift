@@ -123,7 +123,7 @@ private let bilinearGatherSource = """
     output[elem] = s * m;
     """
 
-nonisolated(unsafe) private let bilinearGatherKernel: MLXFast.MLXFastKernel = {
+private let bilinearGatherKernel: MLXFast.MLXFastKernel = {
     MLXFast.metalKernel(
         name: "dcnv2_bilinear_gather",
         inputNames: ["input", "offset", "mask"],
@@ -235,7 +235,7 @@ private let dcnFusedSource = """
     }
     """
 
-nonisolated(unsafe) private let dcnFusedKernel: MLXFast.MLXFastKernel = {
+private let dcnFusedKernel: MLXFast.MLXFastKernel = {
     MLXFast.metalKernel(
         name: "dcnv2_fused",
         inputNames: ["input", "offset", "mask", "weight"],

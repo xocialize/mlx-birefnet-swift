@@ -196,9 +196,9 @@ public final class BiRefNetDecoder: Module {
     public func callAsFunction(_ features: [MLXArray]) -> MLXArray {
         precondition(features.count == 5, "Decoder expects [x, x1, x2, x3, x4]")
         let x  = features[0]
-        var x1 = features[1]
-        var x2 = features[2]
-        var x3 = features[3]
+        let x1 = features[1]
+        let x2 = features[2]
+        let x3 = features[3]
         var x4 = features[4]
         _ = x1; _ = x2; _ = x3  // mutability sanity (pyramid neck is off)
 
@@ -214,7 +214,7 @@ public final class BiRefNetDecoder: Module {
         }
 
         // Up to stage 3 ----------------------------------------------------
-        var p4Up = bilinearResize(p4, x3.dim(1), x3.dim(2))
+        let p4Up = bilinearResize(p4, x3.dim(1), x3.dim(2))
         var p3 = p4Up + lateralBlock4(x3)
         if config.decoderInputInjection {
             p3 = injectImagePatches(x, feature: p3, iptBlk: iptBlk4)
@@ -228,7 +228,7 @@ public final class BiRefNetDecoder: Module {
         _ = p4Up
 
         // Up to stage 2 ----------------------------------------------------
-        var p3Up = bilinearResize(p3, x2.dim(1), x2.dim(2))
+        let p3Up = bilinearResize(p3, x2.dim(1), x2.dim(2))
         var p2 = p3Up + lateralBlock3(x2)
         if config.decoderInputInjection {
             p2 = injectImagePatches(x, feature: p2, iptBlk: iptBlk3)
@@ -242,7 +242,7 @@ public final class BiRefNetDecoder: Module {
         _ = p3Up
 
         // Up to stage 1 ----------------------------------------------------
-        var p2Up = bilinearResize(p2, x1.dim(1), x1.dim(2))
+        let p2Up = bilinearResize(p2, x1.dim(1), x1.dim(2))
         var p1 = p2Up + lateralBlock2(x1)
         if config.decoderInputInjection {
             p1 = injectImagePatches(x, feature: p1, iptBlk: iptBlk2)
