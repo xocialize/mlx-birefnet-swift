@@ -88,10 +88,14 @@ public final class BiRefNetPackage: ModelPackage {
     }
 
     public func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        // CAN-1: the entry checkpoint is the FIRST act of run() — before capability validation
+        // (engine ≥ 0.27.0). Mid-run: the forward is ONE monolithic MLX eval (single lazy graph,
+        // no iterative loop), so the real seams are pre-forward (after pipeline build/download)
+        // and post-forward/pre-encode below — see CancellationTests for the cadence of record.
+        try Task.checkCancellation()
         guard request.capability == .matting, let req = request as? MattingRequest else {
             throw BiRefNetError.unsupportedCapability(request.capability)
         }
-        try Task.checkCancellation()
         let useBest = req.mode == MattingContract.best
         // Runtime memory guard: best@2048 peaks ~18 GB, which the single declared (fast) footprint doesn't
         // reserve — so refuse best on a device whose Metal working set can't hold it (rather than OOM mid-
@@ -104,6 +108,9 @@ public final class BiRefNetPackage: ModelPackage {
             }
         }
         let pipeline = try await pipeline(best: useBest)
+        // Pre-forward checkpoint: the pipeline build above can include a first-request weight
+        // download (lazy best tier), so re-check before committing to the forward.
+        try Task.checkCancellation()
         let input = try Self.decode(req.image)
         // Single-image matting forward is profiled (MLX_PROFILE=1). The pipeline self-evals its
         // outputs (predict + source-res resize), so one coarse region times the whole lazy graph

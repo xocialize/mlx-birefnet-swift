@@ -24,11 +24,12 @@ let package = Package(
         .package(url: "https://github.com/ml-explore/mlx-swift.git", from: "0.31.3"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),  // Hub weight download
-        // Remote engine (0.10.0 supersets the 1.5.0 matting contract). MUST be the remote URL — a
+        // Remote engine (0.27.0 = the CAN cancellation gate — MLXServeConformance CAN-1..3;
+        // supersets the 1.5.0 matting contract). MUST be the remote URL — a
         // local .package(path:) collides with the same package identity arriving by URL from the
         // sibling wrappers in a consuming app's graph, jamming engine resolution. (APP-VALIDATION
         // BRIDGE-026 / mlxengine-forge.)
-        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.10.0"),
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.27.0"),
         // Shared env-gated profiler (MLX_PROFILE=1); zero overhead when unset.
         .package(url: "https://github.com/xocialize/mlx-profiling.git", from: "0.1.0"),
     ],
@@ -70,7 +71,10 @@ let package = Package(
         ),
         .testTarget(
             name: "MLXBiRefNetTests",
-            dependencies: ["MLXBiRefNet"],
+            dependencies: [
+                "MLXBiRefNet",
+                .product(name: "MLXServeConformance", package: "mlx-engine-swift"),  // CAN gate
+            ],
             path: "Tests/MLXBiRefNetTests"
         ),
     ]
