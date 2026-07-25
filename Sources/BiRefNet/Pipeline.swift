@@ -81,6 +81,20 @@ public struct BiRefNetPipeline {
         inputSize: (width: Int, height: Int) = (1024, 1024),
         norm: ImageNorm = .imageNet
     ) {
+        // INFERENCE MODE — load-bearing, not hygiene. `MLXNN.Module.training` defaults to
+        // `true`, and in that state `BatchNorm.callAsFunction` normalises by the CURRENT
+        // BATCH's statistics and *overwrites* the checkpoint's `running_mean`/`running_var`
+        // (MLXNN/Normalization.swift: `if self.training, let runningMean, let runningVar`).
+        // BiRefNet's Swin encoder is LayerNorm-only so it was unaffected, but every
+        // BatchNorm2d in squeeze_module / ASPPDeformable / the decoder silently ran on
+        // per-image batch stats — the trained statistics were never read, and each forward
+        // mutated them further, so repeated calls on one instance drifted.
+        //
+        // Measured against the PyTorch oracle at 1024² (birefnet-parity): logits cosine
+        // 0.264 → 0.9999+ once this is set. This pipeline is inference-only by contract, so
+        // eval mode is set here at the single construction choke point every load path
+        // (`fromPretrained`, `BiRefNet.segment`, direct init) funnels through.
+        model.train(false)
         self.model = model
         self.dtype = dtype
         self.inputSize = inputSize

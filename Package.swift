@@ -19,17 +19,19 @@ let package = Package(
         .library(name: "MLXBiRefNet", targets: ["MLXBiRefNet"]),         // engine-consumable wrapper
         .executable(name: "birefnet-convert", targets: ["BiRefNetConvert"]), // PyTorch/HF → MLX weight converter
         .executable(name: "birefnet-smoke", targets: ["BiRefNetSmoke"]),     // real-forward gate over BiRefNetPackage
+        .executable(name: "birefnet-parity", targets: ["BiRefNetParity"]),   // PyTorch-oracle parity + dtype gate
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift.git", from: "0.31.3"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),  // Hub weight download
-        // Remote engine (0.27.0 = the CAN cancellation gate — MLXServeConformance CAN-1..3;
+        // Remote engine (0.36.0 = the C14 inference-mode gate — MLXServeConformance INF-1..2 +
+        // the MLXServeConformanceNN Module walk; supersets 0.27.0's CAN gate CAN-1..3;
         // supersets the 1.5.0 matting contract). MUST be the remote URL — a
         // local .package(path:) collides with the same package identity arriving by URL from the
         // sibling wrappers in a consuming app's graph, jamming engine resolution. (APP-VALIDATION
         // BRIDGE-026 / mlxengine-forge.)
-        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.27.0"),
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.36.0"),
         // Shared env-gated profiler (MLX_PROFILE=1); zero overhead when unset.
         .package(url: "https://github.com/xocialize/mlx-profiling.git", from: "0.1.0"),
     ],
@@ -47,6 +49,8 @@ let package = Package(
             dependencies: [
                 "BiRefNet",
                 .product(name: "MLX", package: "mlx-swift"),
+                // Named by the C14 INF seam (`inferenceModeGraphs`); already in the binary via the core.
+                .product(name: "MLXNN", package: "mlx-swift"),
                 .product(name: "MLXToolKit", package: "mlx-engine-swift"),
                 .product(name: "MLXProfiling", package: "mlx-profiling"),
                 .product(name: "Hub", package: "swift-transformers"),
@@ -69,11 +73,26 @@ let package = Package(
             ],
             path: "Sources/Smoke"
         ),
+        // PyTorch-oracle parity gate. Injects the oracle's exact normalized input and compares
+        // encoder stages + e2e logits/sigmoid; also the publish-dtype selector (fp16 vs bf16).
+        // Goldens are produced by DEV/lucida-port/oracle_parity.py.
+        .executableTarget(
+            name: "BiRefNetParity",
+            dependencies: [
+                "BiRefNet",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+            ],
+            path: "Sources/Parity",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .testTarget(
             name: "MLXBiRefNetTests",
             dependencies: [
                 "MLXBiRefNet",
-                .product(name: "MLXServeConformance", package: "mlx-engine-swift"),  // CAN gate
+                "BiRefNet",  // INF gate exercises the core graph + its construction choke point
+                .product(name: "MLXServeConformance", package: "mlx-engine-swift"),    // CAN + INF gates
+                .product(name: "MLXServeConformanceNN", package: "mlx-engine-swift"),  // INF Module walk
             ],
             path: "Tests/MLXBiRefNetTests"
         ),

@@ -3,6 +3,7 @@ import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
 import MLX
+import MLXNN
 import MLXToolKit
 import MLXProfiling
 import Hub
@@ -67,6 +68,16 @@ public final class BiRefNetPackage: ModelPackage {
     private let configuration: Configuration
     private var fast: BiRefNetPipeline?
     private var best: BiRefNetPipeline?
+
+    /// Test-facing seam for the engine's **INF gate** (C14): the loaded module graphs, keyed by
+    /// tier. Reached via `@testable` — the conformance to `InferenceModeInspectable` lives in the
+    /// test target so the shipping target takes no dependency on the conformance library.
+    ///
+    /// Both tiers are `nil` until requested (`best` builds lazily), so a package that has not been
+    /// `load()`-ed reports an empty graph — which INF-1 treats as a failure, by design.
+    var inferenceModeGraphs: [String: MLXNN.Module?] {
+        ["fast": fast?.model, "best": best?.model]
+    }
 
     public nonisolated init(configuration: Configuration) {
         self.configuration = configuration
