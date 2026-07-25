@@ -29,3 +29,33 @@ Reviewed 2026-06-22 against `EngineeringDocs/MLXEngineDocs/conformance.md` (cont
 - **Per-mode footprint** (C10 nuance): config-aware/per-mode footprints so a variant package declares
   fast+best separately — fed to MLXEngine ENHANCEMENTS §3.1 (BiRefNet is the "affordable-tier-blocked" case).
 - **Best-tier memory**: best@2048 ~18 GB is a 32 GB+ feature; guarded at runtime, adapter falls back to fast.
+
+---
+
+## Lucida (`lucida-matting`) — C0–C13 delta review
+
+Reviewed 2026-07-25. Lucida reuses `BiRefNetPackage` verbatim (identical graph, byte-identical
+converted key set), so only the items where its **manifest** or **configuration** differ are restated
+here; everything else inherits the BiRefNet verdicts above.
+
+| C | Item | Verdict | Evidence |
+|---|---|---|---|
+| **C1** | Capability registration | ✅ | One `.matting` surface named `lucida-matting`, distinct from `birefnet`. Multi-package-per-capability by PackageID — the sanctioned route, not a fused surface. |
+| **C4** | Mode-as-parameter | ✅ | Declares **no** modes: one checkpoint at its one trained resolution (1024). `BiRefNetConfiguration.resolved(mode:)` therefore ignores any mode a caller sends rather than falling through to another family's weights — guarded by `testLucidaIgnoresModeAndNeverReachesBiRefNetWeights`. |
+| **C6** | Specialty declaration | ✅ | `specialties: []`. The illustration/text strength is described in the surface summary, not smuggled in as a governed-vocabulary term. |
+| **C7** | Weight license gate | ✅* | `weightLicense: .mit` — upstream declares MIT for the weights, so MIT is what we declare. *CAVEAT: the card states the training data "mix[es] MIT-licensed and research-only datasets" (P3M-10k, COD10K, DIS5K, plus CC-BY-4.0 ToonOut). That is a data-derivation question rather than a defect in the grant received, but it is the same shape as the MobileWan C7 finding — a legal read is owed before this becomes a shipping default rather than an opt-in tier. |
+| **C9** | PackageConfiguration | ✅ | Shares `BiRefNetConfiguration` with a `variant` axis. Hand-written `Codable` keeps pre-variant persisted configurations decoding (`testPreVariantConfigurationStillDecodes`); `Lucida.registration` refuses a `.birefnet` configuration so the manifest's identity can never be published over another family's weights. |
+| **C10** | Requirements manifest | ✅ | `QuantFootprint(.fp16, resident 0.6 GB, peakActivation 14 GB)` — see MEMORY-REPORT.md; measured equal to the `fast` tier, so that tier's in-app `phys_footprint` re-baseline transfers. fp16 only: bf16 fails parity at cos 0.9958 (`testOnlyFP16Published`). |
+| **C13** | Runtime governance | ✅ | Engine-constructed via an explicit `PackageRegistration` + `nonisolated init`; `unload()` clears the role-keyed pipeline cache and the MLX buffer pool. CAN-1..3 green on the new PackageID. |
+
+### MAT gate (contract 1.19.0, engine-executed since 1.24.0)
+
+Both families pass MAT-1..5 offline (`LucidaTests`). The package-local `HubApi` downloader and the
+`swift-transformers` dependency are gone — the engine materializes every declared source before
+`load()`, and `weightsURL(for:)` keeps only a resolve-and-throw offline backstop.
+
+### C14 inference mode
+
+Inherited: the `train(false)` choke point in `BiRefNetPipeline.init` covers every family, and
+`inferenceModeGraphs` now enumerates each servable tier by role, so the INF gate walks Lucida's graph
+too once it is loaded.

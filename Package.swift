@@ -24,7 +24,6 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift.git", from: "0.31.3"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
-        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),  // Hub weight download
         // Remote engine (0.36.0 = the C14 inference-mode gate — MLXServeConformance INF-1..2 +
         // the MLXServeConformanceNN Module walk; supersets 0.27.0's CAN gate CAN-1..3;
         // supersets the 1.5.0 matting contract). MUST be the remote URL — a
@@ -53,7 +52,6 @@ let package = Package(
                 .product(name: "MLXNN", package: "mlx-swift"),
                 .product(name: "MLXToolKit", package: "mlx-engine-swift"),
                 .product(name: "MLXProfiling", package: "mlx-profiling"),
-                .product(name: "Hub", package: "swift-transformers"),
             ],
             path: "Sources/MLXBiRefNet"
         ),

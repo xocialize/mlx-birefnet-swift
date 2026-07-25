@@ -7,7 +7,7 @@ import MLXToolKit
 import MLXServeCore
 import MLXBiRefNet
 
-// birefnet-smoke <image> <fast.safetensors> <best.safetensors> <out.png> [fast|best]
+// birefnet-smoke <image> <fast|lucida.safetensors> <best.safetensors> <out.png> [fast|best|lucida]
 // Drives the package through the REAL MLXServeEngine (register → run) — proving the full Stage-2 path:
 // license-gate admission (MIT/MIT), device eligibility (C10), engine-constructs-the-package (C13), and the
 // matte forward. Reports timing + peak GPU memory + matte gray-stats so a uniform (silent) matte is caught.
@@ -45,7 +45,7 @@ struct Smoke {
         let a = CommandLine.arguments
         guard a.count >= 5 else {
             FileHandle.standardError.write(Data(
-                "usage: birefnet-smoke <image> <fast.safetensors> <best.safetensors> <out.png> [fast|best]\n".utf8))
+                "usage: birefnet-smoke <image> <fast|lucida.safetensors> <best.safetensors> <out.png> [fast|best|lucida]\n".utf8))
             exit(2)
         }
         let imagePath = a[1], fastW = a[2], bestW = a[3], outPath = a[4]
@@ -55,20 +55,31 @@ struct Smoke {
                   let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { throw SmokeError.badImage }
             let image = Image(format: .png, data: try encodePNG(cg), width: cg.width, height: cg.height)
 
-            // "hub" sentinel → nil override → exercise the live HubApi download (post-upload verify).
-            let config = BiRefNetConfiguration(
-                fastWeightsURL: fastW == "hub" ? nil : URL(fileURLWithPath: fastW),
-                bestWeightsURL: bestW == "hub" ? nil : URL(fileURLWithPath: bestW))
+            // Quality selector doubles as the FAMILY selector: "lucida" drives the separate
+            // `lucida-matting` PackageID (its own manifest/provenance), taking the Lucida weights
+            // from the <fast.safetensors> slot. "fast"/"best" keep the original birefnet behaviour.
+            let isLucida = quality == "lucida"
+            // "hub" sentinel → nil override → exercise live engine-executed materialization
+            // (post-upload verify: the engine downloads declared sources before load()).
+            let overrideURL: (String) -> URL? = { $0 == "hub" ? nil : URL(fileURLWithPath: $0) }
+            let config = isLucida
+                ? BiRefNetConfiguration.lucida(weightsURL: overrideURL(fastW))
+                : BiRefNetConfiguration(fastWeightsURL: overrideURL(fastW),
+                                        bestWeightsURL: overrideURL(bestW))
 
             // Full engine path: register (license gate + C10 eligibility) → run (engine constructs/loads
             // the package, C13; first run lazily loads weights).
             let engine = MLXServeEngine()
             await engine.useModelStore(ModelStore(root: nil))
             let t0 = Date()
-            let id = try await engine.register(BiRefNetPackage.registration, configuration: config)
+            let id = try await engine.register(
+                isLucida ? Lucida.registration : BiRefNetPackage.registration,
+                configuration: config)
             let tReg = Date().timeIntervalSince(t0)
 
-            let mode: Mode = quality == "best" ? MattingContract.best : MattingContract.fast
+            // Lucida advertises no modes (one checkpoint at 1024) — send nil rather than inventing one.
+            let mode: Mode? = isLucida ? nil
+                : (quality == "best" ? MattingContract.best : MattingContract.fast)
             let t1 = Date()
             let resp = try await engine.run(MattingRequest(image: image, preferredKind: .softAlpha, mode: mode),
                                             package: id)

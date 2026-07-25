@@ -12,6 +12,18 @@ Measured via `birefnet-smoke` (one variant per process = a clean peak) → `MEM`
 |---|---|---|---|---|
 | `fast` (general)     | 1024² | 423 MB | **4,941 MB** | **6,185 MB** |
 | `best` (HR-matting)  | 2048² | 425 MB | **18,305 MB** | **22,222 MB** |
+| `lucida` (fine-tune) | 1024² | 423 MB | **4,941 MB** | **6,185 MB** |
+
+**Lucida (2026-07-25).** Byte-identical to `fast` — same Swin-L + ASPP-Deformable graph, same 220.7 M
+parameters, same 1024 input — measured on the same box via
+`birefnet-smoke <img> lucida-fp16.safetensors unused out.png lucida` (the real
+`MLXServeEngine.register → run` path on the `lucida-matting` PackageID; run 0.38 s, matte mean 0.213
+range [0.000…1.000]). Because the MLX-peak matches `fast`'s exactly, `fast`'s in-app
+**`phys_footprint`** re-baseline (floor 0.54 GB / peak 13.70 GB) transfers to Lucida by measurement
+rather than assumption, and that is what its manifest declares: `QuantFootprint(.fp16, resident
+0.6 GB, peakActivation 14 GB)`. Resident is deliberately set ABOVE the measured 0.54 GB phys floor
+(a 500 MB first draft under-declared it); it is lower than the birefnet package's 0.9 GB because
+Lucida holds ONE graph rather than a floor covering both tiers.
 
 ## Findings
 

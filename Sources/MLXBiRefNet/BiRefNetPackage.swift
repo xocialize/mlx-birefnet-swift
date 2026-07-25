@@ -6,7 +6,6 @@ import MLX
 import MLXNN
 import MLXToolKit
 import MLXProfiling
-import Hub
 import BiRefNet
 
 /// The conformant `matting` ModelPackage over the vendored BiRefNet core. One package, two quality modes
@@ -66,31 +65,39 @@ public final class BiRefNetPackage: ModelPackage {
     private static let bestMinWorkingSet: UInt64 = 48_000_000_000
 
     private let configuration: Configuration
-    private var fast: BiRefNetPipeline?
-    private var best: BiRefNetPipeline?
+    /// Built pipelines keyed by checkpoint role ("fast" / "best" / "lucida"). Keyed by ROLE rather
+    /// than a fixed pair of fields, so a new checkpoint family costs no state here.
+    private var pipelines: [String: BiRefNetPipeline] = [:]
 
     /// Test-facing seam for the engine's **INF gate** (C14): the loaded module graphs, keyed by
     /// tier. Reached via `@testable` — the conformance to `InferenceModeInspectable` lives in the
     /// test target so the shipping target takes no dependency on the conformance library.
     ///
-    /// Both tiers are `nil` until requested (`best` builds lazily), so a package that has not been
-    /// `load()`-ed reports an empty graph — which INF-1 treats as a failure, by design.
+    /// Every servable tier appears; tiers not yet built report `nil` (non-primary tiers build
+    /// lazily), so a package that has not been `load()`-ed reports an empty graph — which INF-1
+    /// treats as a failure, by design.
     var inferenceModeGraphs: [String: MLXNN.Module?] {
-        ["fast": fast?.model, "best": best?.model]
+        var graphs: [String: MLXNN.Module?] = [:]
+        for ckpt in configuration.servableCheckpoints {
+            graphs[ckpt.role] = pipelines[ckpt.role]?.model
+        }
+        return graphs
     }
 
     public nonisolated init(configuration: Configuration) {
         self.configuration = configuration
     }
 
-    /// Warm the default (`fast`) tier; `best` builds lazily on its first request so a fast-only workflow
-    /// never pays the 2048 weight load (or download).
+    /// Warm the configuration's primary tier (`fast` for BiRefNet, the single tier for Lucida).
+    /// Other tiers build lazily on first request, so a fast-only workflow never pays the 2048
+    /// weight load.
     public func load() async throws {
-        if fast == nil { fast = try await buildPipeline(best: false) }
+        guard let primary = configuration.servableCheckpoints.first else { return }
+        _ = try pipeline(for: primary)
     }
 
     public func unload() async {
-        fast = nil; best = nil
+        pipelines.removeAll()
         // Release the retained MLX buffer pool so eviction actually frees process RSS — dropping the refs
         // alone leaves the (large, @2048) activation buffers in MLX's cache, so phys_footprint doesn't drop
         // and R-MEM-1 can't reclaim. (Image-app acceptance run: process RSS grew monotonically across model
@@ -107,20 +114,26 @@ public final class BiRefNetPackage: ModelPackage {
         guard request.capability == .matting, let req = request as? MattingRequest else {
             throw BiRefNetError.unsupportedCapability(request.capability)
         }
-        let useBest = req.mode == MattingContract.best
-        // Runtime memory guard: best@2048 peaks ~18 GB, which the single declared (fast) footprint doesn't
-        // reserve — so refuse best on a device whose Metal working set can't hold it (rather than OOM mid-
-        // forward). The caller (e.g. EngineMatteProvider) can catch this and fall back to fast.
-        if useBest {
+        // Checkpoint identity + resolution come from the configuration's single choke point, so a
+        // `mode` can only pick a tier WITHIN the registered family — never another family's weights
+        // (a `.best` request on the Lucida PackageID resolves to Lucida's 1024 checkpoint, which is
+        // what its descriptor advertises, not to BiRefNet's HR weights).
+        let checkpoint = configuration.resolved(mode: req.mode)
+        // Runtime memory guard: the 2048 tier peaks ~48 GB, which the declared (1024) footprint
+        // doesn't reserve — so refuse it on a device whose Metal working set can't hold it (rather
+        // than OOM mid-forward). Keyed on the RESOLVED resolution, not on the requested mode, so it
+        // tracks what will actually run. The caller (e.g. EngineMatteProvider) can catch this and
+        // fall back to fast.
+        if checkpoint.inputSize >= 2048 {
             let workingSet = MLX.GPU.deviceInfo().maxRecommendedWorkingSetSize
             if workingSet > 0 && workingSet < Self.bestMinWorkingSet {
                 throw BiRefNetError.insufficientMemoryForBest(needsBytes: Self.bestMinWorkingSet,
                                                               deviceBytes: workingSet)
             }
         }
-        let pipeline = try await pipeline(best: useBest)
-        // Pre-forward checkpoint: the pipeline build above can include a first-request weight
-        // download (lazy best tier), so re-check before committing to the forward.
+        let pipeline = try self.pipeline(for: checkpoint)
+        // Pre-forward checkpoint: the lazy build above can be the first touch of a non-primary
+        // tier's weights, so re-check before committing to the forward.
         try Task.checkCancellation()
         let input = try Self.decode(req.image)
         // Single-image matting forward is profiled (MLX_PROFILE=1). The pipeline self-evals its
@@ -128,7 +141,7 @@ public final class BiRefNetPackage: ModelPackage {
         // honestly; the core stays uninstrumented (single eval boundary, per the ddcolor precedent).
         // beginRun sits AFTER the lazy build so a first-request weight download can't skew the run.
         let prof = MLXProfiler.shared
-        prof.beginRun("birefnet matting \(useBest ? "best" : "fast") \(input.width)x\(input.height)")
+        prof.beginRun("birefnet matting \(checkpoint.role) \(input.width)x\(input.height)")
         let prediction = prof.region("matting", "forward") {
             pipeline(input)                            // preprocess → forward → sigmoid → resize-to-source
         }
@@ -143,43 +156,55 @@ public final class BiRefNetPackage: ModelPackage {
 
     // MARK: - Pipeline construction
 
-    private func pipeline(best useBest: Bool) async throws -> BiRefNetPipeline {
-        if useBest {
-            if best == nil { best = try await buildPipeline(best: true) }
-            return best!
-        }
-        if fast == nil { fast = try await buildPipeline(best: false) }
-        return fast!
+    /// Cached-or-built pipeline for a resolved checkpoint.
+    private func pipeline(
+        for checkpoint: BiRefNetConfiguration.ResolvedCheckpoint
+    ) throws -> BiRefNetPipeline {
+        if let existing = pipelines[checkpoint.role] { return existing }
+        let built = try buildPipeline(for: checkpoint)
+        pipelines[checkpoint.role] = built
+        return built
     }
 
-    private func buildPipeline(best useBest: Bool) async throws -> BiRefNetPipeline {
-        let size = useBest ? 2048 : 1024
-        let url = try await weightsURL(best: useBest)
+    private func buildPipeline(
+        for checkpoint: BiRefNetConfiguration.ResolvedCheckpoint
+    ) throws -> BiRefNetPipeline {
+        let url = try weightsURL(for: checkpoint)
         var cfg = BiRefNetConfig.swinLargeDefault
-        cfg.inputSize = (width: size, height: size)
-        return try BiRefNetPipeline.fromPretrained(url.path, dtype: Self.dtype(configuration.quant), config: cfg)
+        cfg.inputSize = (width: checkpoint.inputSize, height: checkpoint.inputSize)
+        return try BiRefNetPipeline.fromPretrained(url.path,
+                                                   dtype: Self.dtype(configuration.quant),
+                                                   config: cfg)
     }
 
-    /// Resolve the weights file, **downloading from HF on first use** via the convention's native
-    /// downloader (swift-transformers `HubApi`, pointed at the engine-stamped model-store root; idempotent —
-    /// skips files already present). Download progress is forwarded to the engine's `WeightDownloadProgress`
-    /// sink so the host's prep UI shows a real `.downloading(fraction:)`. A direct override URL (pre-resolved
-    /// caller / CLI smoke) bypasses the network entirely.
-    private func weightsURL(best useBest: Bool) async throws -> URL {
-        if let override = useBest ? configuration.bestWeightsURL : configuration.fastWeightsURL {
+    /// Resolve the weights file on disk. **No download happens here** — since contract 1.24 the
+    /// ENGINE materializes every source `BiRefNetConfiguration.missingWeightSources(storeRoot:)`
+    /// reports, before `load()` is ever called, with `WeightDownloadProgress` already bound so the
+    /// host's prep UI shows a real `.downloading(fraction:)`. What remains is resolution plus an
+    /// offline backstop: reaching the throw means no engine materialization ran (no store set, or a
+    /// non-engine caller), which is a configuration error rather than something to paper over with a
+    /// silent fetch.
+    ///
+    /// Accepts BOTH store layouts, matching the MS-2 probe: the hub-client snapshot
+    /// (`snapshots/<commit>/…`) and the engine executor's flat layout.
+    private func weightsURL(
+        for checkpoint: BiRefNetConfiguration.ResolvedCheckpoint
+    ) throws -> URL {
+        if let override = checkpoint.override {
             guard FileManager.default.fileExists(atPath: override.path) else {
                 throw BiRefNetError.weightsMissing(override)
             }
             return override
         }
-        let repo = useBest ? configuration.bestRepo : configuration.fastRepo
-        let hub = HubApi(downloadBase: configuration.modelsRootDirectory)
-        let dir = try await hub.snapshot(from: repo, matching: ["*.safetensors"]) { @Sendable progress in
-            WeightDownloadProgress.report(fraction: progress.fractionCompleted)
+        guard let root = configuration.modelsRootDirectory else { throw BiRefNetError.noModelStore }
+        let store = ModelStore(root: root)
+        let candidates = [store.snapshotDirectory(for: checkpoint.repo, revision: nil),
+                          store.directory(for: checkpoint.repo)].compactMap { $0 }
+        for dir in candidates {
+            let url = dir.appendingPathComponent(configuration.weightsFile)
+            if FileManager.default.fileExists(atPath: url.path) { return url }
         }
-        let url = dir.appendingPathComponent(configuration.weightsFile)
-        guard FileManager.default.fileExists(atPath: url.path) else { throw BiRefNetError.weightsMissing(url) }
-        return url
+        throw BiRefNetError.weightsNotMaterialized(role: checkpoint.role, repo: checkpoint.repo)
     }
 
     private nonisolated static func dtype(_ q: Quant) -> DType {
@@ -214,6 +239,9 @@ public final class BiRefNetPackage: ModelPackage {
         case unsupportedCapability(Capability)
         case noModelStore
         case weightsMissing(URL)
+        /// A declared weight source is absent from the store — i.e. the engine's pre-`load()`
+        /// materialization never ran. The offline backstop, not a fetch trigger.
+        case weightsNotMaterialized(role: String, repo: String)
         case decodeFailed
         case encodeFailed
         /// `best` requested but the device's Metal working set can't hold the ~18 GB peak. Catch + retry `fast`.
