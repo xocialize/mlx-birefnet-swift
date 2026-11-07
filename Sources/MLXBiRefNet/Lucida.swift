@@ -54,21 +54,20 @@ public enum Lucida {
             provenance: Provenance(sourceRepo: "mlx-community/Lucida-fp16",
                                    revision: "main", tier: 2),
             requirements: RequirementsManifest(
-                // SPLIT FOOTPRINT (contract 1.14.0), on the in-app **process phys_footprint** basis
-                // the birefnet row was re-baselined to — that is what R-MEM-1 admits against and what
-                // OOMs the process, and an MLX working-set figure under-reads it ~2.7×.
+                // SPLIT FOOTPRINT (contract 1.14.0), on the **process phys_footprint** basis (what R-MEM-1
+                // admits against and what OOMs the process).
                 //
-                // Lucida runs the IDENTICAL graph at the IDENTICAL resolution as the birefnet `fast`
-                // tier, so the fast tier's in-app measurement transfers directly. Confirmed rather
-                // than assumed: `birefnet-smoke` reports byte-identical memory for both families
-                // (floor 423 MB / MLX-peak 4941 MB), and that 4941 MB is the same MLX-peak (4.9 GB)
-                // whose in-app phys equivalent was measured at floor 0.54 GB / peak 13.70 GB.
-                //   • residentBytes 0.6 GB  = ONE 1024 graph's weights floor (measured phys 0.54 GB
-                //     + margin). Lower than the birefnet package's 0.9 GB, which covers both tiers.
-                //   • peakActivationBytes 14 GB = 13.70 peak − 0.54 floor ≈ 13.2 GB transient + margin.
+                // Lucida runs the IDENTICAL graph at the IDENTICAL resolution as the birefnet `fast` tier, so
+                // the fast tier's measurement transfers. Confirmed rather than assumed: `birefnet-smoke` reports
+                // byte-identical MLX memory for both families (floor 423 MB, MLX peak 4941 MB).
+                //   • residentBytes 0.6 GB = ONE 1024 graph's weights floor (measured phys 0.54 GB + margin).
+                //     Lower than the birefnet package's 0.9 GB, which covers both tiers.
+                //   • peakActivationBytes 7.2 GB: fast's re-measure (0.4.2, AB-A-0176) is a 7.32–7.57 GB process
+                //     peak through the engine's managed MLX pool, across 1–100 MP inputs. The earlier 14 GB was an
+                //     uncapped pool (14.58 GB today with `.unmanaged`). See BiRefNetPackage's manifest comment.
                 footprints: [QuantFootprint(quant: .fp16,
                                             residentBytes: 600_000_000,
-                                            peakActivationBytes: 14_000_000_000)],
+                                            peakActivationBytes: 7_200_000_000)],
                 requiredBackends: [.metalGPU],
                 os: OSRequirement(minMacOS: SemanticVersion(major: 26, minor: 0, patch: 0))
             ),

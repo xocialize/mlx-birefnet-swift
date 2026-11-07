@@ -23,29 +23,31 @@ public final class BiRefNetPackage: ModelPackage {
             // code provenance (vendored mnmly/mlx-swift-BiRefNet) lives in NOTICE/LICENSE.
             provenance: Provenance(sourceRepo: "mlx-community/BiRefNet-fp16", revision: "main", tier: 2),
             requirements: RequirementsManifest(
-                // SPLIT FOOTPRINT (contract 1.14.0) — RE-BASELINED 2026-06-30 to the in-app **process
-                // phys_footprint** (the authoritative admission basis: it's what R-MEM-1 compares against and
-                // what OOMs the process), measured in MLXEngineImage via MLXEngineTestKit with isolate +
-                // clearCache. The original birefnet-smoke figures (fast peak 4.9 GB / best 18.3 GB) were MLX
-                // working-set, which UNDER-read the real process peak by ~2.7× (the MLX buffer cache + process
-                // overhead aren't in the MLX-peak metric). Clean phys_footprint (floor after clearCache → true
-                // weights; peak = run high-water):
-                //   • fast@1024 : floor 0.54 GB · peak 13.70 GB → transient ~13.2 GB
-                //   • best@2048 : floor 0.61 GB · peak 47.79 GB → transient ~47.2 GB
+                // SPLIT FOOTPRINT (contract 1.14.0). RE-MEASURED 2026-11-07 (0.4.2, AB-A-0176, receipt in
+                // Docs/receipts/footprint-20261107/). Each row is the **process phys_footprint** lifetime peak
+                // (`/usr/bin/time -l`), one fresh process, run through the real MLXServeEngine
+                // (`birefnet-smoke`, Release). Stack: mlx-swift 0.32.3, mlx-engine-swift 0.74.0, M5 Max 128 GB.
+                // Inputs ran 1, 12, 24, 48 and 100 MP; the input size moves the peak by at most 0.25 GB.
+                //   • fast@1024 : 7.32–7.57 GB (the engine's default pool cap is 2.15 GB here); 6.22 GB under a
+                //     16 GB Mac's cap (0.64 GB) · MLX active peak 4.94 GB
+                //   • best@2048 : 20.11–21.79 GB (2.15 GB cap); 19.91 GB under a 32 GB Mac's cap (1.19 GB)
+                //     · MLX active peak 18.3 GB
+                // The 2026-06-30 numbers (13.70 / 47.79 GB) were an UNCAPPED MLX buffer pool. With
+                // `GPUCacheConfiguration(limit: .unmanaged)` the same smoke gives 14.58 / 47.04 GB today. The
+                // cap is the engine's default since 0.21.0 (min(2 GB, 5% of budget)), so these declarations
+                // assume an engine-managed pool. A host that runs `.unmanaged`, or writes MLX.Memory.cacheLimit
+                // high itself, pays the old numbers.
                 // Declared = the FAST (consumer) envelope as a split: residentBytes ~0.9 GB (both pipelines'
-                // weights, best builds lazily + co-resides once requested); peakActivationBytes = the measured
-                // fast transient. The engine reserves one shared transient across residents (serialized
-                // inference), so this charges ~0.9 GB persistent + ~14 GB transient.
+                // weights; best builds lazily and co-resides once requested); peakActivationBytes 7.2 GB. That
+                // charges 8.1 GB, about 7% over the worst measured row, so fast admits on a 16 GB Mac (12.7 GB
+                // budget). The engine reserves one shared transient across residents (serialized inference).
                 //
-                // best's measured split (NOT the admitted default; both modes are fp16 so QuantFootprint can't
-                // carry it): residentBytes ~0.6 GB · peakActivationBytes ~47.2 GB. best stays a RUNTIME-guarded
-                // variant (see `run()` / bestMinWorkingSet) — mode is per-request, so admission (at load,
-                // before the mode is known) can't reserve its ~48 GB peak. The guard was raised 19.5 → 48 GB
-                // on this re-measure (best does NOT fit 32 GB, is tight on 64 GB). Making best a first-class
-                // admitted variant = P1b (mode → PackageID); deferred (see EFFICIENCY-ADOPTION.md outcome).
+                // best stays a RUNTIME-guarded variant (see `run()` / bestMinWorkingSet): mode is per-request,
+                // so admission (at load, before the mode is known) can't reserve its peak. Making best a
+                // first-class admitted variant = P1b (mode → PackageID); deferred (see EFFICIENCY-ADOPTION.md).
                 footprints: [QuantFootprint(quant: .fp16,
                                             residentBytes: 900_000_000,         // both pipelines' weights floor
-                                            peakActivationBytes: 14_000_000_000)], // measured fast transient (~13.2 GB + margin)
+                                            peakActivationBytes: 7_200_000_000)], // fast: worst 7.57 GB phys, capped pool
                 requiredBackends: [.metalGPU],
                 os: OSRequirement(minMacOS: SemanticVersion(major: 26, minor: 0, patch: 0))
             ),
@@ -58,11 +60,13 @@ public final class BiRefNetPackage: ModelPackage {
             ])
     }
 
-    /// Device Metal working set best@2048 needs. RE-BASELINED 2026-06-30 to the in-app phys_footprint peak
-    /// (47.79 GB — the old 19.5 GB was from the MLX-peak smoke and ~2.4× too low, so best falsely admitted
-    /// on 32 GB Macs). Below this, `run(.best)` refuses rather than OOMs: a 32 GB Mac fails, a 64 GB Mac
-    /// clears it (tight). Callers (e.g. EngineMatteProvider) catch `insufficientMemoryForBest` → fall back to fast.
-    private static let bestMinWorkingSet: UInt64 = 48_000_000_000
+    /// Device Metal working set best@2048 needs. RE-MEASURED 2026-11-07 (0.4.2, AB-A-0176): the process
+    /// phys_footprint peak through the engine's managed pool is 21.79 GB at worst, across 1–100 MP inputs on a
+    /// 2.15 GB cap, and 19.91 GB under a 32 GB Mac's 1.19 GB cap. The 2026-06-30 guard of 48 GB was the uncapped
+    /// pool (47.04 GB today with `.unmanaged`). At 22 GB a 32 GB Mac clears it (working set ≈ 25 GB) and a 24 GB
+    /// Mac (19.07 GB, AB-R-0551) refuses. Below this, `run(.best)` refuses rather than OOMs. Callers (e.g.
+    /// EngineMatteProvider) catch `insufficientMemoryForBest` and fall back to fast.
+    private static let bestMinWorkingSet: UInt64 = 22_000_000_000
 
     private let configuration: Configuration
     /// Built pipelines keyed by checkpoint role ("fast" / "best" / "lucida"). Keyed by ROLE rather
@@ -119,7 +123,7 @@ public final class BiRefNetPackage: ModelPackage {
         // (a `.best` request on the Lucida PackageID resolves to Lucida's 1024 checkpoint, which is
         // what its descriptor advertises, not to BiRefNet's HR weights).
         let checkpoint = configuration.resolved(mode: req.mode)
-        // Runtime memory guard: the 2048 tier peaks ~48 GB, which the declared (1024) footprint
+        // Runtime memory guard: the 2048 tier peaks ~22 GB (managed pool), which the declared (1024) footprint
         // doesn't reserve — so refuse it on a device whose Metal working set can't hold it (rather
         // than OOM mid-forward). Keyed on the RESOLVED resolution, not on the requested mode, so it
         // tracks what will actually run. The caller (e.g. EngineMatteProvider) can catch this and

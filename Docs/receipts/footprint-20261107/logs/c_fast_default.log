@@ -1,0 +1,21 @@
+CACHE applied cap: 2.15 GB
+OK fast → /private/tmp/claude-501/-Users-dustinnielson--claude-spares-spare-1wXnK0/9b404cb3-31e6-44b2-874b-25c0de4e52d9/scratchpad/birefnet/out/c_fast_default.png | 8000x6000 kind=softAlpha | reg 0.00s run 1.43s | peakGPU 4941 MB | gray mean 0.098 [0.000…1.000]
+MEM fast | floor 423 MB · peak 4941 MB · recommend 6185 MB (×1.2+256) | workingSet 110100 MB · exceeds no
+        3.56 real         2.57 user         0.51 sys
+          1446395904  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              105034  page reclaims
+                  28  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   3  voluntary context switches
+                5534  involuntary context switches
+         68506899321  instructions retired
+         13446711077  cycles elapsed
+          7470942752  peak memory footprint

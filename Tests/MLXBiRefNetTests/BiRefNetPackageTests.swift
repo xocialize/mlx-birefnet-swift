@@ -29,6 +29,18 @@ final class BiRefNetPackageTests: XCTestCase {
         XCTAssertLessThan(fp!.residentBytes, 6_500_000_000, "resident floor must drop below the old flat charge")
     }
 
+    /// AB-A-0176 tripwire. Select Subject (fast) must stay admissible on a 16 GB Mac, whose engine budget is about
+    /// 12.7 GB (16 GiB × 0.74), and the charge must still cover the measured worst row: a 7.57 GB process peak
+    /// through the engine's managed pool, 100 MP input, 2.15 GB cap.
+    func testFastAdmitsOnSixteenGigabytesAndCoversTheMeasuredPeak() {
+        for manifest in [BiRefNetPackage.manifest, Lucida.manifest] {
+            let fp = manifest.requirements.footprints.first { $0.quant == .fp16 }!
+            let charge = fp.residentBytes + fp.peakActivationBytes
+            XCTAssertLessThanOrEqual(charge, UInt64(Double(16 << 30) * 0.74), "fast must admit on a 16 GB budget")
+            XCTAssertGreaterThanOrEqual(charge, 7_570_000_000, "the charge must cover the measured 7.57 GB peak")
+        }
+    }
+
     /// `QuantConfigured` opt-in so the governor charges the matching declared `QuantFootprint`.
     func testQuantConfigured() {
         XCTAssertEqual((BiRefNetConfiguration() as? QuantConfigured)?.quant, .fp16)

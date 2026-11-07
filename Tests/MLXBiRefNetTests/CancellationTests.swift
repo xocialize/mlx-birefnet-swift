@@ -3,7 +3,7 @@
 // validation, weights, or the best-tier memory guard); CAN-3 is the document of record for the
 // checkpoint cadence. BiRefNet is a CAN-3 judgment case: the forward is ONE monolithic MLX eval
 // (single encoder-decoder lazy graph, ~0.5 s fast@1024 / ~2 s best@2048 — no denoise loop, no
-// tiling), yet peakActivationBytes 14 GB ≥ 2 GB makes the manifest long-run implied. So the
+// tiling), yet peakActivationBytes 7.2 GB ≥ 2 GB makes the manifest long-run implied. So the
 // declared cadence names the REAL seams run() has, once per matted frame each:
 //   • entry checkpoint (first act of run(), BiRefNetPackage.run)
 //   • pre-forward, after pipeline build — a first-request best-tier weight download can
@@ -34,8 +34,8 @@ final class CancellationTests: XCTestCase {
     // MARK: - CAN-3 — checkpoint-cadence declaration (the document of record)
 
     func testCANCadenceDeclaration() {
-        // peakActivationBytes 14 GB ≥ 2 GB ⇒ long-run implied — the sub-second exemption is
-        // not available (and best@2048 genuinely runs ~2 s at a ~48 GB phys peak).
+        // peakActivationBytes 7.2 GB ≥ 2 GB ⇒ long-run implied — the sub-second exemption is
+        // not available (and best@2048 genuinely runs ~2 s at a ~22 GB phys peak, managed pool).
         XCTAssertTrue(CancellationConformance.longRunImplied(by: BiRefNetPackage.manifest))
 
         let report = CancellationConformance.checkCadence(

@@ -69,7 +69,18 @@ struct Smoke {
 
             // Full engine path: register (license gate + C10 eligibility) → run (engine constructs/loads
             // the package, C13; first run lazily loads weights).
-            let engine = MLXServeEngine()
+            // BIREFNET_SMOKE_GPU_CACHE=unmanaged | <bytes>: the engine's MLX buffer-pool policy for a
+            // footprint row (default: the engine's automatic cap, min(2 GB, 5% of budget), as hosts run it).
+            // `unmanaged` reproduces an uncapped pool; a byte count emulates a smaller Mac's cap (AB-A-0176).
+            let cachePolicy: GPUCacheConfiguration = {
+                switch ProcessInfo.processInfo.environment["BIREFNET_SMOKE_GPU_CACHE"] {
+                case "unmanaged"?: return GPUCacheConfiguration(limit: .unmanaged)
+                case let s? where UInt64(s) != nil: return GPUCacheConfiguration(limit: .bytes(UInt64(s)!))
+                default: return GPUCacheConfiguration()
+                }
+            }()
+            let engine = MLXServeEngine(gpuCache: cachePolicy)
+            print("CACHE applied cap: \(engine.appliedGPUCacheLimitBytes.map { String(format: "%.2f GB", Double($0) / 1e9) } ?? "none (unmanaged)")")
             await engine.useModelStore(ModelStore(root: nil))
             let t0 = Date()
             let id = try await engine.register(
